@@ -12,16 +12,20 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 import requests
-from unidecode import unidecode
 
 external_stylesheets = [dbc.themes.BOOTSTRAP, 'https://codepen.io/chriddyp/pen/bWLwgP.css']
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
+app.title = 'Reporting HVD Europe'
 
 datagouv_url = "https://www.data.gouv.fr/"
 endpoint = "https://data.europa.eu/sparql"
 headers = {
     'Accept': 'application/sparql-results+json',
     'Content-Type': 'application/x-www-form-urlencoded'
+}
+licenses = {
+    "https://www.etalab.gouv.fr/wp-content/uploads/2014/05/Licence_Ouverte.pdf": "[Licence Ouverte 1.0](https://www.etalab.gouv.fr/wp-content/uploads/2014/05/Licence_Ouverte.pdf)",
+    "https://www.etalab.gouv.fr/licence-ouverte-open-licence": "[Licence Ouverte 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence)",
 }
 session = requests.Session()
 
@@ -61,7 +65,7 @@ resources_query = """prefix dct: <http://purl.org/dc/terms/>
 prefix r5r: <http://data.europa.eu/r5r/>
 prefix dcat:  <http://www.w3.org/ns/dcat#>
 
-select distinct ?d ?title ?cat_label ?res_title ?accessURL where {
+select distinct ?d ?title ?cat_label ?license ?res_title ?accessURL where {
 <http://data.europa.eu/88u/catalogue/plateforme-ouverte-des-donnees-publiques-francaises> ?cp ?d.
 ?d r5r:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj>.
 ?d a dcat:Dataset.
@@ -76,6 +80,7 @@ optional { ?dist dcat:accessURL ?accessURL. }
 optional { ?dist dct:title ?res_title.
      FILTER ( langMatches( lang(?res_title),  "" ))
 }
+optional { ?dist dct:license ?license. }
 }
 """
 
@@ -157,21 +162,32 @@ def update_graph(orga_url):
     print(query)
     resources = query_to_df(query, loop=True)
     resources['resourceLink'] = resources['accessURL'].apply(build_resource_link)
-    markdown = f"##### [Lien vers la page de l'organisation]({orga_url})\n"
-    markdown += f"#### {resources['d'].nunique()} HVD reporté{'s' if resources['d'].nunique() > 1 else ''} à l'Europe :\n"
+    markdown = (
+        f"##### [Lien vers la page de l'organisation]({orga_url})\n"
+        f"#### {resources['d'].nunique()} "
+        f"HVD reporté{'s' if resources['d'].nunique() > 1 else ''} à l'Europe :\n"
+    )
     for dataset in resources["title"].unique():
         restr = resources.loc[resources["title"] == dataset]
         dataset_url = restr["d"].unique()[0]
         cat_label = restr["cat_label"].unique()[0]
+        license = (
+            restr["license"].unique()[0]
+            if restr['license'].nunique() == 1
+            else 'plusieurs licences renseignées'
+        )
         # without collapse
         # markdown += f"- [{dataset}]({dataset_url}) ({len(restr)} ressource{'s' if len(restr) > 1 else ''})\n"
         # for _, row in restr.iterrows():
         #     markdown += f"   - [{row['res_title']}]({row['resourceLink']})\n"
 
         # with collapse
-        markdown += f"###### [{dataset}]({dataset_url}) (catégorie `{cat_label}`)\n\n"
-        markdown += "<details>\n\n"
-        markdown += f"<summary>Voir {len(restr)} ressource{'s' if len(restr) > 1 else ''}</summary>\n\n"
+        markdown += (
+            f"###### [{dataset}]({dataset_url}) (catégorie `{cat_label}`, "
+            f"{licenses.get(license, license)})\n\n"
+            "<details>\n\n"
+            f"<summary>Voir {len(restr)} ressource{'s' if len(restr) > 1 else ''}</summary>\n\n"
+        )
         for _, row in restr.iterrows():
             if row['resourceLink']:
                 markdown += f"- [{row['res_title']}]({row['resourceLink']})\n\n"
