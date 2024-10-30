@@ -12,6 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 import requests
+from urllib.parse import quote_plus, urlencode
 
 external_stylesheets = [dbc.themes.BOOTSTRAP, 'https://codepen.io/chriddyp/pen/bWLwgP.css']
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
@@ -33,7 +34,8 @@ session = requests.Session()
 def query_to_df(query, loop=True):
     def _get_from_query(query):
         params = {
-            'query': query
+            'query': query,
+            'timeout': 10000000,
         }
         r = session.post(endpoint, headers=headers, data=params)
         r.raise_for_status()
@@ -45,7 +47,7 @@ def query_to_df(query, loop=True):
 
     if loop:
         dfs = []
-        batch_size = 10000
+        batch_size = 100
         offset = 0
         while True:
             df = _get_from_query(query + f" OFFSET {offset} LIMIT {batch_size}")
@@ -65,7 +67,7 @@ resources_query = """prefix dct: <http://purl.org/dc/terms/>
 prefix r5r: <http://data.europa.eu/r5r/>
 prefix dcat:  <http://www.w3.org/ns/dcat#>
 
-select distinct ?d ?title ?cat_label ?license ?res_title ?accessURL where {
+select distinct ?d ?title ?cat_label ?license ?res_title ?accessURL ?downloadURL where {
 <http://data.europa.eu/88u/catalogue/plateforme-ouverte-des-donnees-publiques-francaises> ?cp ?d.
 ?d r5r:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj>.
 ?d a dcat:Dataset.
@@ -77,6 +79,7 @@ optional { ?d r5r:hvdCategory ?category. }
 OPTIONAL {?category skos:prefLabel ?cat_label. FILTER langMatches( lang(?cat_label),  "fr" )}
 ?d dct:publisher <$ORGA$>.
 optional { ?dist dcat:accessURL ?accessURL. }
+optional { ?dist dcat:downloadURL ?downloadURL. }
 optional { ?dist dct:title ?res_title.
      FILTER ( langMatches( lang(?res_title),  "" ))
 }
@@ -123,6 +126,7 @@ app.layout = dbc.Container(
         ],
             style={"padding": "0px 0px 5px 0px"},
         ),
+        html.Div(id="download_div"),
         dcc.Loading(id='loader'),
     ])
 
@@ -152,10 +156,45 @@ def resfresh_producteurs(click):
 
 
 @app.callback(
+    Output('download_div', 'children'),
+    [Input('producteur_dropdown', 'value')]
+)
+def update_download_div(orga_url):
+    if not orga_url:
+        raise PreventUpdate
+    return [
+        dbc.Button(
+            id="download_csv_button",
+            children="Télécharger les données en csv",
+        ),
+        dcc.Download(id="download"),
+    ]
+
+
+@app.callback(
+    Output('download', 'data'),
+    [Input('download_csv_button', 'n_clicks')],
+    [State('producteur_dropdown', 'value')],
+    prevent_initial_call=True,
+)
+def download_csv(click, orga_url):
+    if not orga_url:
+        raise PreventUpdate
+    query = resources_query.replace("$ORGA$", orga_url)
+    url = (
+        endpoint
+        + "?default-graph-uri=&query="
+        + quote_plus(query, safe='*')
+        + "&format=text%2Fcsv&timeout=120000&signal_void=on"
+    )
+    return dict(content=requests.get(url).text, filename="hvd.csv")
+
+
+@app.callback(
     Output('loader', 'children'),
     [Input('producteur_dropdown', 'value')]
 )
-def update_graph(orga_url):
+def update_markdown(orga_url):
     if not orga_url:
         raise PreventUpdate
     query = resources_query.replace("$ORGA$", orga_url)
@@ -163,14 +202,15 @@ def update_graph(orga_url):
     resources = query_to_df(query, loop=True)
     resources['resourceLink'] = resources['accessURL'].apply(build_resource_link)
     markdown = (
-        f"##### [Lien vers la page de l'organisation]({orga_url})\n"
+        f"##### [Lien vers les HVD de l'organisation sur data.gouv.fr]({orga_url + '?tag=hvd#/datasets'})\n"
         f"#### {resources['d'].nunique()} "
-        f"HVD reporté{'s' if resources['d'].nunique() > 1 else ''} à l'Europe :\n"
+        f"jeu{'x' if resources['d'].nunique() > 1 else ''} de données HVD "
+        f"reporté{'s' if resources['d'].nunique() > 1 else ''} à l'Europe :\n"
     )
     for dataset in resources["title"].unique():
         restr = resources.loc[resources["title"] == dataset]
         dataset_url = restr["d"].unique()[0]
-        cat_label = restr["cat_label"].unique()[0]
+        cat_label = ", ".join(restr["cat_label"].unique())
         license = (
             restr["license"].unique()[0]
             if restr['license'].nunique() == 1
@@ -183,17 +223,17 @@ def update_graph(orga_url):
 
         # with collapse
         markdown += (
-            f"###### [{dataset}]({dataset_url}) (catégorie `{cat_label}`, "
+            f"###### [{dataset}]({dataset_url}) (catégorie{'s' if restr['cat_label'].nunique() > 1 else ''} `{cat_label}`, "
             f"{licenses.get(license, license)})\n\n"
             "<details>\n\n"
             f"<summary>Voir {len(restr)} ressource{'s' if len(restr) > 1 else ''}</summary>\n\n"
         )
         for _, row in restr.iterrows():
             if row['resourceLink']:
-                markdown += f"- [{row['res_title']}]({row['resourceLink']})\n\n"
+                markdown += f"- [{row['res_title']}]({row['resourceLink']}) : {row['downloadURL']}\n"
             else:
-                markdown += f"- {row['res_title']} /!\\ cette ressource n'existe plus\n\n"
-        markdown += "</details>\n\n"
+                markdown += f"- {row['res_title']} /!\\ cette ressource n'existe plus\n"
+        markdown += "\n</details>\n\n"
 
     # print(markdown)
     return dcc.Markdown(
@@ -205,4 +245,4 @@ def update_graph(orga_url):
 
 # %%
 if __name__ == '__main__':
-    app.run_server(debug=False, use_reloader=False, port=8051)
+    app.run_server(debug=False, port=8051)
