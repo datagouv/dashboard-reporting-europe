@@ -1,18 +1,14 @@
 # -*- coding: utf-8 -*-
 
 import dash
-# from dash import dash_table
 from dash import dcc
 from dash import html
-# import dash_daq as daq
 import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
-import plotly.express as px
-import plotly.graph_objects as go
 import pandas as pd
 import requests
-from urllib.parse import quote_plus, urlencode
+from urllib.parse import quote_plus
 
 external_stylesheets = [dbc.themes.BOOTSTRAP, 'https://codepen.io/chriddyp/pen/bWLwgP.css']
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
