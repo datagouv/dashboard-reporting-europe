@@ -314,9 +314,10 @@ def update_markdown(orga_url, catalog):
     markdown = ""
     if "francaises" in catalog:
         markdown += f"##### [Lien vers les HVD de l'organisation sur data.gouv.fr]({orga_url + '?tag=hvd#/datasets'})\n"
+    nb = datasets['d'].nunique()
     markdown += (
-        f"#### {len(datasets)} jeu{'x' if len(datasets) > 1 else ''} de données HVD "
-        f"reporté{'s' if len(datasets) > 1 else ''} à l'Europe :\n"
+        f"#### {nb} jeu{'x' if nb > 1 else ''} de données HVD "
+        f"reporté{'s' if nb > 1 else ''} à l'Europe :\n"
     )
     data = {}
     for _, row in datasets.sort_values(by="title").iterrows():
