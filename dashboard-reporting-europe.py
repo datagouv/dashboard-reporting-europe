@@ -126,21 +126,33 @@ def build_resource_link(resource_download_link):
         print(resource_download_link)
 
 
+def placeholder_from_options(options):
+    return ', '.join(sorted(
+        list(set([o['label'] for o in options])),
+        key=len)[:3]
+    ) + "..."
+
+
 # %% APP LAYOUT:
 app.layout = dbc.Container(
     [
         dbc.Row([
-            html.H3("Reporting HVD sur data.europa",
-                    style={
-                        "padding": "5px 0px 10px 0px",  # "padding": "top right down left"
-                    }),
-        ]),
+            dbc.Col([
+                html.H3("[BETA] Reporting HVD sur data.europa"),
+            ], width=9),
+            dbc.Col([
+                html.I('by data.gouv.fr'),
+            ], width=3),
+        ],
+            style={
+                "padding": "5px 0px 10px 0px",  # "padding": "top right down left"
+            },
+        ),
         dbc.Row([
             html.H5('Sélectionner un catalogue source'),
             dbc.Col([
                 dcc.Dropdown(
                     id="catalog_dropdown",
-                    placeholder="data.gov.be, GovData...",
                     value="http://data.europa.eu/88u/catalogue/plateforme-ouverte-des-donnees-publiques-francaises",
                     clearable=True,
                 ),
@@ -163,7 +175,9 @@ app.layout = dbc.Container(
             dbc.Col([
                 dbc.Button(
                     id='refresh_button',
-                    children='Rafraîchir les données'
+                    children='Rafraîchir les données',
+                    outline=True,
+                    color="primary",
                 ),
             ],
                 width=4,
@@ -172,7 +186,6 @@ app.layout = dbc.Container(
             dbc.Col([
                 dcc.Dropdown(
                     id="producteur_dropdown",
-                    placeholder="Météo France, Shom...",
                     clearable=True,
                 ),
             ],
@@ -202,21 +215,26 @@ app.layout = dbc.Container(
 
 
 @app.callback(
-    Output('catalog_dropdown', 'options'),
-    [Input('refresh_button', 'n_clicks')]
+    [
+        Output('catalog_dropdown', 'options'),
+        Output('catalog_dropdown', 'placeholder'),
+    ],
+    [Input('refresh_button', 'n_clicks')],
 )
 def resfresh_catalog(click):
     catalog = query_to_df(catalog_query, loop=False)
-    return [{
+    options = [{
         "label": row["catalog_title"],
         "value": row["catalog"],
     } for _, row in catalog.iterrows()]
+    return options, placeholder_from_options(options)
 
 
 @app.callback(
     [
         Output('producteur_dropdown', 'options'),
         Output('producteur_dropdown', 'value'),
+        Output('producteur_dropdown', 'placeholder'),
         Output('producteur_clipboard', 'content'),
     ],
     [Input('catalog_dropdown', 'value')],
@@ -234,10 +252,11 @@ def resfresh_producteurs(catalog):
     }
     """.replace("$CATALOG$", catalog)
     orgas = query_to_df(q)
-    return [{
+    options = [{
         "label": row["orga"],
         "value": row["pub_url"],
-    } for _, row in orgas.sort_values(by="orga").iterrows()], None, q
+    } for _, row in orgas.sort_values(by="orga").iterrows()]
+    return options, None, placeholder_from_options(options), q
 
 
 @app.callback(
@@ -245,7 +264,7 @@ def resfresh_producteurs(catalog):
     [
         Input('producteur_dropdown', 'value'),
         Input('catalog_dropdown', 'value'),
-    ]
+    ],
 )
 def update_download_div(orga_url, catalog):
     if not orga_url or not catalog:
@@ -255,6 +274,8 @@ def update_download_div(orga_url, catalog):
             dbc.Button(
                 id="download_csv_button",
                 children="Télécharger les données en csv",
+                outline=True,
+                color="primary",
             ),
             dcc.Download(id="download"),
         ],
