@@ -76,11 +76,11 @@ datasets_query = """prefix dct: <http://purl.org/dc/terms/>
 prefix r5r: <http://data.europa.eu/r5r/>
 prefix dcat:  <http://www.w3.org/ns/dcat#>
 
-select distinct ?d ?title ?cat_label where {
+select distinct ?d ?title ?cat_label ?landing_page where {
 <$CATALOG$> ?cp ?d.
 ?d r5r:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj>.
 ?d a dcat:Dataset.
-?d dcat:distribution ?dist.
+optional { ?d dcat:landingPage ?landing_page. }
 optional { ?d dct:title ?title.
      FILTER ( langMatches( lang(?title),  "" ))
 }
@@ -318,8 +318,27 @@ def update_markdown(orga_url, catalog):
         f"#### {len(datasets)} jeu{'x' if len(datasets) > 1 else ''} de données HVD "
         f"reporté{'s' if len(datasets) > 1 else ''} à l'Europe :\n"
     )
+    data = {}
     for _, row in datasets.sort_values(by="title").iterrows():
-        markdown += f"- [{row['title']}]({row['d']}) (catégorie `{row['cat_label']}`)\n"
+        if row['d'] not in data:
+            data[row['d']] = {
+                'title': row['title'],
+                'cat_labels': [row['cat_label']],
+                'landing_page': row['landing_page'],
+            }
+        else:
+            data[row['d']]['cat_labels'].append(row['cat_label'])
+    for d in data:
+        source = (
+            f"[lien vers la source]({data[d]['landing_page']})"
+            if data[d]['landing_page']
+            else "/!\\ lien vers la source manquant"
+        )
+        markdown += (
+            f"- [{data[d]['title']}]({d}) ({source}) "
+            f"(catégorie{'s' if len(data[d]['cat_labels']) > 1 else ''} "
+            + ', '.join([f'`{cl}`' for cl in data[d]["cat_labels"]]) + ")\n"
+        )
 
     # print(markdown)
     return dcc.Markdown(
