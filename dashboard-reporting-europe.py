@@ -253,7 +253,7 @@ def resfresh_producteurs(catalog):
     options = [{
         "label": row["orga"],
         "value": row["pub_url"],
-    } for _, row in orgas.sort_values(by="orga").iterrows()]
+    } for _, row in orgas.drop_duplicates(subset="pub_url").sort_values(by="orga").iterrows()]
     return options, None, placeholder_from_options(options)
 
 
@@ -342,7 +342,7 @@ def update_markdown(orga_url, catalog):
         source = (
             f"[lien vers la source]({data[d]['landing_page']})"
             if data[d]['landing_page']
-            else "/!\\ lien vers la source manquant"
+            else "⚠️ lien vers la source manquant"
         )
         markdown += (
             f"- [{data[d]['title']}]({d}) ({source}) "
