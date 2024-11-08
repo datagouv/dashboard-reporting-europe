@@ -72,6 +72,18 @@ where {
 LIMIT 20
 """
 
+producteurs_query = """prefix dct: <http://purl.org/dc/terms/>
+prefix r5r: <http://data.europa.eu/r5r/>
+prefix dcat:  <http://www.w3.org/ns/dcat#>
+
+select distinct ?pub_url ?orga where {
+<$CATALOG$>  ?cp ?d.
+?d r5r:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj>.
+?d dct:publisher ?pub_url.
+optional { ?pub_url foaf:name ?orga. }
+}
+"""
+
 datasets_query = """prefix dct: <http://purl.org/dc/terms/>
 prefix r5r: <http://data.europa.eu/r5r/>
 prefix dcat:  <http://www.w3.org/ns/dcat#>
@@ -82,10 +94,10 @@ select distinct ?d ?title ?cat_label ?landing_page where {
 ?d a dcat:Dataset.
 optional { ?d dcat:landingPage ?landing_page. }
 optional { ?d dct:title ?title.
-     FILTER ( langMatches( lang(?title),  "" ))
+     filter ( langMatches( lang(?title),  "" ))
 }
 optional { ?d r5r:hvdCategory ?category. }
-OPTIONAL {?category skos:prefLabel ?cat_label. FILTER langMatches( lang(?cat_label),  "fr" )}
+optional {?category skos:prefLabel ?cat_label. filter langMatches( lang(?cat_label),  "fr" )}
 ?d dct:publisher <$ORGA$>.
 }
 """
@@ -100,15 +112,15 @@ OPTIONAL {?category skos:prefLabel ?cat_label. FILTER langMatches( lang(?cat_lab
 # ?d a dcat:Dataset.
 # ?d dcat:distribution ?dist.
 # optional { ?d dct:title ?title.
-#      FILTER ( langMatches( lang(?title),  "" ))
+#      filter ( langMatches( lang(?title),  "" ))
 # }
 # optional { ?d r5r:hvdCategory ?category. }
-# OPTIONAL {?category skos:prefLabel ?cat_label. FILTER langMatches( lang(?cat_label),  "fr" )}
+# optional {?category skos:prefLabel ?cat_label. filter langMatches( lang(?cat_label),  "fr" )}
 # ?d dct:publisher <$ORGA$>.
 # optional { ?dist dcat:accessURL ?accessURL. }
 # optional { ?dist dcat:downloadURL ?downloadURL. }
 # optional { ?dist dct:title ?res_title.
-#      FILTER ( langMatches( lang(?res_title),  "" ))
+#      filter ( langMatches( lang(?res_title),  "" ))
 # }
 # optional { ?dist dct:license ?license. }
 # }
@@ -131,6 +143,10 @@ def placeholder_from_options(options):
         list(set([o['label'] for o in options])),
         key=len)[:3]
     ) + "..."
+
+
+def button_clipboard(id):
+    return dbc.Button("Voir requête", id=id, outline=True, color="info")
 
 
 # %% APP LAYOUT:
@@ -160,15 +176,7 @@ app.layout = dbc.Container(
                 width=6,
             ),
             dbc.Col([
-                dcc.Clipboard(
-                    content=catalog_query,
-                    title="Copier la requête de récupération des catalogues",
-                    style={
-                        "display": "inline-block",
-                        "fontSize": 20,
-                        "verticalAlign": "top",
-                    },
-                ),
+                button_clipboard("catalog_query_button"),
             ],
                 width=2,
             ),
@@ -192,23 +200,24 @@ app.layout = dbc.Container(
                 width=8,
             ),
             dbc.Col([
-                dcc.Clipboard(
-                    id="producteur_clipboard",
-                    title="Copier la requête de récupération des producteurs",
-                    style={
-                        "display": "inline-block",
-                        "fontSize": 20,
-                        "verticalAlign": "top",
-                    },
-                ),
+                button_clipboard("producteur_query_button"),
             ],
                 width=2,
             ),
         ],
             style={"padding": "0px 0px 5px 0px"},
         ),
+        html.Div(id="ghost_div", children=[
+            button_clipboard("datasets_query_button"),
+        ], style={'display': "none"}),
         html.Div(id="download_div"),
         dcc.Loading(id='loader'),
+        dbc.Modal(id="query_modal", is_open=False, children=[
+             dbc.Button(
+                "Fermer",
+                id="close_modal_button",
+             ),
+        ]),
     ])
 
 # %% Callbacks
@@ -235,32 +244,24 @@ def resfresh_catalog(click):
         Output('producteur_dropdown', 'options'),
         Output('producteur_dropdown', 'value'),
         Output('producteur_dropdown', 'placeholder'),
-        Output('producteur_clipboard', 'content'),
     ],
     [Input('catalog_dropdown', 'value')],
 )
 def resfresh_producteurs(catalog):
-    q = """prefix dct: <http://purl.org/dc/terms/>
-    prefix r5r: <http://data.europa.eu/r5r/>
-    prefix dcat:  <http://www.w3.org/ns/dcat#>
-
-    select distinct ?pub_url ?orga where {
-    <$CATALOG$>  ?cp ?d.
-    ?d r5r:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj>.
-    ?d dct:publisher ?pub_url.
-    optional { ?pub_url foaf:name ?orga. }
-    }
-    """.replace("$CATALOG$", catalog)
+    q = producteurs_query.replace("$CATALOG$", catalog)
     orgas = query_to_df(q)
     options = [{
         "label": row["orga"],
         "value": row["pub_url"],
     } for _, row in orgas.sort_values(by="orga").iterrows()]
-    return options, None, placeholder_from_options(options), q
+    return options, None, placeholder_from_options(options)
 
 
 @app.callback(
-    Output('download_div', 'children'),
+    [
+        Output('download_div', 'children'),
+        Output('ghost_div', 'style'),
+    ],
     [
         Input('producteur_dropdown', 'value'),
         Input('catalog_dropdown', 'value'),
@@ -268,7 +269,7 @@ def resfresh_producteurs(catalog):
 )
 def update_download_div(orga_url, catalog):
     if not orga_url or not catalog:
-        return []
+        return [], {'display': "none"}
     return dbc.Row([
         dbc.Col([
             dbc.Button(
@@ -281,20 +282,7 @@ def update_download_div(orga_url, catalog):
         ],
             width=3,
         ),
-        dbc.Col([
-            dcc.Clipboard(
-                content=datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog),
-                title="Copier la requête de récupération des jeux de données",
-                style={
-                    "display": "inline-block",
-                    "fontSize": 20,
-                    "verticalAlign": "top",
-                },
-            ),
-        ],
-            width=2,
-        ),
-    ])
+    ]), {'display': 'block', "padding": "5px 0px 10px 0px"}
 
 
 @app.callback(
@@ -330,7 +318,7 @@ def update_markdown(orga_url, catalog):
     if not orga_url or not catalog:
         return []
     query = datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
-    print(query)
+    # print(query)
     datasets = query_to_df(query, loop=True)
     markdown = ""
     if "francaises" in catalog:
@@ -368,6 +356,55 @@ def update_markdown(orga_url, catalog):
         link_target="_blank",
         # dangerously_allow_html=True
     )
+
+
+@app.callback(
+    [
+        Output('query_modal', 'children'),
+        Output('query_modal', 'is_open'),
+    ],
+    [
+        Input('catalog_query_button', 'n_clicks'),
+        Input('producteur_query_button', 'n_clicks'),
+        Input('datasets_query_button', 'n_clicks'),
+        Input('close_modal_button', 'n_clicks'),
+    ],
+    [
+        State('catalog_dropdown', 'value'),
+        State('producteur_dropdown', 'value')
+    ],
+    prevent_initial_call=True,
+)
+def show_modal(catalog_click, producteur_click, datasets_click, close, catalog, orga_url):
+    trigger = dash.ctx.triggered[0]["prop_id"].split("_")[0]
+    header = ""
+    query = ""
+    if close:
+        return [dbc.Button(
+            "Fermer",
+            id="close_modal_button",
+        ),], False
+    if trigger == "catalog":
+        header = "Requête de récupération des catalogues"
+        query = catalog_query
+    if trigger == "producteur":
+        header = "Requête de récupération des producteurs du catalogue sélectionné"
+        query = producteurs_query.replace("$CATALOG$", catalog)
+    if trigger == "datasets":
+        header = "Requête de récupération des jeux de données du producteur sélectionné"
+        query = datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
+    return [
+        dbc.ModalHeader(dbc.ModalTitle(header), close_button=False),
+        dbc.ModalBody(dcc.Markdown(f"```sql\n{query}```")),
+        dbc.ModalFooter(
+            dbc.Button(
+                "Fermer",
+                id="close_modal_button",
+                outline=True,
+                color="danger",
+            )
+        ),
+    ], True
 
 
 # retrieving resources is too slow, maybe we'll come back to this later
