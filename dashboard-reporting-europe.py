@@ -92,13 +92,31 @@ select distinct ?d ?title ?cat_label ?landing_page where {
 <$CATALOG$> ?cp ?d.
 ?d r5r:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj>.
 ?d a dcat:Dataset.
+?d dct:publisher <$ORGA$>.
 optional { ?d dcat:landingPage ?landing_page. }
 optional { ?d dct:title ?title.
      filter ( langMatches( lang(?title),  "" ))
 }
 optional { ?d r5r:hvdCategory ?category. }
 optional {?category skos:prefLabel ?cat_label. filter langMatches( lang(?cat_label),  "fr" )}
+}
+"""
+
+dataservices_in_datasets_query = """prefix dct: <http://purl.org/dc/terms/>
+prefix r5r: <http://data.europa.eu/r5r/>
+prefix dcat:  <http://www.w3.org/ns/dcat#>
+
+select distinct ?d ?api_title ?access_url ?endpoint_url ?endpoint_description where {
+<http://data.europa.eu/88u/catalogue/plateforme-ouverte-des-donnees-publiques-francaises> ?cp ?d.
+?d r5r:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj>.
+?d a dcat:Dataset.
 ?d dct:publisher <$ORGA$>.
+?d dcat:distribution ?dist.
+?dist dcat:accessURL ?access_url.
+?dist dcat:accessService ?accserv.
+optional { ?accserv dct:title ?api_title. }
+optional { ?accserv dcat:endpointURL ?endpoint_url. }
+optional { ?accserv dcat:endpointDescription ?endpoint_description. }
 }
 """
 
@@ -318,14 +336,20 @@ def update_markdown(orga_url, catalog):
     if not orga_url or not catalog:
         return []
     query = datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
+    ds_query = dataservices_in_datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
     # print(query)
     datasets = query_to_df(query, loop=True)
+    dataservices = query_to_df(ds_query, loop=True)
     markdown = ""
     if "francaises" in catalog:
         markdown += f"##### [Lien vers les HVD de l'organisation sur data.gouv.fr]({orga_url + '?tag=hvd#/datasets'})\n"
     nb = datasets['d'].nunique()
+    nb_ds = len(dataservices)
+    md_ds = ""
+    if nb_ds:
+        md_ds = f"et {nb_ds} dataservice{'s' if nb_ds > 1 else ''} "
     markdown += (
-        f"#### {nb} jeu{'x' if nb > 1 else ''} de données HVD "
+        f"#### {nb} jeu{'x' if nb > 1 else ''} de données HVD {md_ds}"
         f"reporté{'s' if nb > 1 else ''} à l'Europe :\n"
     )
     data = {}
@@ -349,6 +373,18 @@ def update_markdown(orga_url, catalog):
             f"(catégorie{'s' if len(data[d]['cat_labels']) > 1 else ''} "
             + ', '.join([f'`{cl}`' for cl in data[d]["cat_labels"]]) + ")\n"
         )
+        if not nb_ds:
+            continue
+        restr_ds = dataservices.loc[dataservices['d'] == d]
+        if len(restr_ds):
+            for _, row in restr_ds.iterrows():
+                description = "⚠️ pas de description"
+                if row["endpoint_description"]:
+                    description = f"[description]({row['endpoint_description']})"
+                markdown += (
+                    f"   - API [{row['api_title']}]({row['access_url']}) "
+                    f"([endpoint]({row['endpoint_url']}), {description})\n"
+                )
 
     # print(markdown)
     return dcc.Markdown(
@@ -407,7 +443,7 @@ def show_modal(catalog_click, producteur_click, datasets_click, close, catalog, 
     ], True
 
 
-# retrieving resources is too slow, maybe we'll come back to this later
+# retrieving distributions is too slow, maybe we'll come back to this later
 # @app.callback(
 #     Output('loader', 'children'),
 #     [Input('producteur_dropdown', 'value')],
