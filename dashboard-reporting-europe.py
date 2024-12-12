@@ -177,6 +177,24 @@ def build_sparql_url(query):
     )
 
 
+def create_orga_dataset(catalog, orga_url):
+    query = datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
+    datasets = pd.read_csv(build_sparql_url(query))
+    ds_query = dataservices_in_datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
+    dataservices = pd.read_csv(build_sparql_url(ds_query))
+    if len(dataservices):
+        merged = pd.merge(
+            datasets,
+            # only keeping one dataservice per dataset for now
+            dataservices.drop_duplicates(subset="d"),
+            on="d",
+            how="left",
+        )
+    else:
+        merged = datasets.copy()
+    return merged
+
+
 # %% APP LAYOUT:
 app.layout = dbc.Container(
     [
@@ -225,12 +243,28 @@ app.layout = dbc.Container(
                     clearable=True,
                 ),
             ],
-                width=8,
+                width=6,
             ),
             dbc.Col([
                 button_clipboard("producteur_query_button"),
             ],
                 width=2,
+            ),
+            dbc.Col([
+                dbc.Button(
+                    id='download_all_button',
+                    children='Télécharger toutes les données disponibles',
+                    outline=True,
+                    color="success",
+                ),
+                dcc.Download(id="download_all"),
+                dbc.Tooltip(
+                    "Le SIE n'est pas inclus dans cet export car la requête timeout",
+                    target="download_all_button",
+                    placement='right',
+                ),
+            ],
+                width=4,
             ),
         ],
             style={"padding": "0px 0px 5px 0px"},
@@ -302,7 +336,7 @@ def update_download_div(orga_url, catalog):
         dbc.Col([
             dbc.Button(
                 id="download_csv_button",
-                children="Télécharger les données en csv",
+                children="Télécharger les données de ce producteur",
                 outline=True,
                 color="primary",
             ),
@@ -325,21 +359,41 @@ def update_download_div(orga_url, catalog):
 def download_csv(click, orga_url, catalog):
     if not orga_url:
         raise PreventUpdate
-    query = datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
-    datasets = pd.read_csv(build_sparql_url(query))
-    ds_query = dataservices_in_datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
-    dataservices = pd.read_csv(build_sparql_url(ds_query))
-    if len(dataservices):
-        merged = pd.merge(
-            datasets,
-            # only keeping one dataservice per dataset for now
-            dataservices.drop_duplicates(subset="d"),
-            on="d",
-            how="left",
-        )
-    else:
-        merged = datasets.copy()
-    return dict(content=merged.to_csv(index=False), filename="hvd.csv")
+    return dict(
+        content=create_orga_dataset(catalog, orga_url).to_csv(index=False),
+        filename="hvd.csv",
+    )
+
+
+@app.callback(
+    Output('download_all', 'data'),
+    [Input('download_all_button', 'n_clicks')],
+    [State('catalog_dropdown', 'value')],
+    prevent_initial_call=True,
+)
+def download_all_data(click, catalog):
+    q = producteurs_query.replace("$CATALOG$", catalog)
+    orgas = query_to_df(q)
+    dfs = []
+    for _, row in orgas.iterrows():
+        if "534fffb2a3a7292c64a78123" in row["pub_url"]:
+            # skipping SIE for now, too long and will crash anyway
+            continue
+        # print(f"> {row['orga']}")
+        try:
+            df = create_orga_dataset(catalog, row["pub_url"])
+            df["producteur"] = row["orga"]
+            df["producteur_url"] = row["pub_url"]
+            first_cols = ["producteur", "producteur_url"]
+            df = df[first_cols + [c for c in df.columns if c not in first_cols]]
+            dfs.append(df)
+        except Exception as e:
+            print(e)
+            pass
+    return dict(
+        content=pd.concat(dfs, ignore_index=True).to_csv(index=False),
+        filename="hvd.csv",
+    )
 
 
 @app.callback(
