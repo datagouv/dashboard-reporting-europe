@@ -88,12 +88,13 @@ datasets_query = """prefix dct: <http://purl.org/dc/terms/>
 prefix r5r: <http://data.europa.eu/r5r/>
 prefix dcat:  <http://www.w3.org/ns/dcat#>
 
-select distinct ?d ?title ?cat_label ?landing_page where {
+select distinct ?d ?title ?cat_label ?landing_page ?contact_point where {
 <$CATALOG$> ?cp ?d.
 ?d r5r:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj>.
 ?d a dcat:Dataset.
 ?d dct:publisher <$ORGA$>.
 optional { ?d dcat:landingPage ?landing_page. }
+optional { ?d dcat:contactPoint ?contact_point. }
 optional { ?d dct:title ?title.
      filter ( langMatches( lang(?title),  "" ))
 }
@@ -165,6 +166,15 @@ def placeholder_from_options(options):
 
 def button_clipboard(id):
     return dbc.Button("Voir requête", id=id, outline=True, color="info")
+
+
+def build_sparql_url(query):
+    return (
+        endpoint
+        + "?default-graph-uri=&query="
+        + quote_plus(query, safe='*')
+        + "&format=text%2Fcsv&timeout=120000&signal_void=on"
+    )
 
 
 # %% APP LAYOUT:
@@ -316,13 +326,20 @@ def download_csv(click, orga_url, catalog):
     if not orga_url:
         raise PreventUpdate
     query = datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
-    url = (
-        endpoint
-        + "?default-graph-uri=&query="
-        + quote_plus(query, safe='*')
-        + "&format=text%2Fcsv&timeout=120000&signal_void=on"
-    )
-    return dict(content=requests.get(url).text, filename="hvd.csv")
+    datasets = pd.read_csv(build_sparql_url(query))
+    ds_query = dataservices_in_datasets_query.replace("$ORGA$", orga_url).replace("$CATALOG$", catalog)
+    dataservices = pd.read_csv(build_sparql_url(ds_query))
+    if len(dataservices):
+        merged = pd.merge(
+            datasets,
+            # only keeping one dataservice per dataset for now
+            dataservices.drop_duplicates(subset="d"),
+            on="d",
+            how="left",
+        )
+    else:
+        merged = datasets.copy()
+    return dict(content=merged.to_csv(index=False), filename="hvd.csv")
 
 
 @app.callback(
